@@ -1,37 +1,44 @@
-# Troop 93 Eventa Plan Apps Script
+# Scout Troop 93 Events Plan Apps Script
 
-## Using clasp
+To facilitate Scout Troop annual planning while working with our PLC (Patrol Leaders Council), I found it helpful to rapidly create and maintain a Google Sheet that automatically determines the day(s) of the week based on a date or date-range and automatically looks up the time of sunset to help us plan events that require daylight or darkness. This lookup is cached and only runs on date-changes for speed compared to a basic formula that constantly re-runs when opening a sheet. The lookup is performed based on our Lat/Long, but that could be enhanced to get calculated from a zipcode or similar in the future.
 
-Get the Apps Script Script ID
-Open your sheet.
-Extensions -> Apps Script.
-In Apps Script, open Project Settings.
-Copy Script ID.
-Clone the bound script into this workspace
-In your workspace folder:
-cd /Users/julianje/src/troop_events_plan
-Clone:
-clasp clone YOUR_SCRIPT_ID
-This creates local project files such as Code.gs and appsscript.json.
-Pull and push workflow
-Pull latest from Google before edits:
-clasp pull
-After edits, push back:
-clasp push
-If prompted about overwriting, pull first, then re-apply your edits, then push.
-Optional but useful local structure
-Keep all Apps Script files in this folder.
-Add a README only if you want team notes (not required for functionality).
-Keep credentials and API keys out of committed files.
-Test in Google Sheet
-After push, return to Sheet and run a function once from Apps Script editor to authorize.
-Recalculate formulas in the sheet and confirm Day/Sunset behavior.
-Common issues and quick fixes:
+You are welcome to take this and use it. If you develop enhancements, I will consider incorporating those if you provide a PR.
 
-Wrong Google account
-Run clasp login again in the account that owns the sheet/script.
-Permission denied on clone/push
-Confirm that account has edit access to the bound Apps Script project.
-Conflict errors
-Run clasp pull first, resolve differences locally, then clasp push.
-If you want, I can guide you interactively through each command one by one and troubleshoot any error output you get.
+I make no guarantee or warrantee on the accuracy or performance. This is supported best-effort in my hour-a-week ;-) with Scouting.
+
+This repository keeps the Google Sheet Apps Script source under version control while leaving the local clasp project config untracked so that your worksheet ID is not shared. `Clasp` is a tool that will pull or push Apps Script code from/to your configured Google sheet to enable advanced functions and calculations beyond what native formulas provide.
+
+## Repo layout
+
+- `src/Code.js` and `src/appsscript.json` are committed source files.
+- `.clasp.json` is local-only and ignored by git.
+- `.clasp.json.example` is a committed template you can copy to `.clasp.json` after cloning.
+- `.env` is reserved for any local-only secrets or overrides if you ever add them.
+
+## Setup
+
+1. Clone the repo.
+2. Copy `.clasp.json.example` to `.clasp.json`.
+3. Replace `YOUR_SCRIPT_ID_HERE` with your bound Apps Script project ID.
+4. Confirm `.clasp.json` has `"rootDir": "src"`.
+5. Run `clasp login` if needed.
+6. Run `clasp pull` or `clasp push` from the repository root.
+
+## Working with clasp
+
+Because `rootDir` points to `src`, clasp reads from and writes to the `src` folder automatically.
+
+Use `clasp pull` before editing if the sheet project may have changed.
+Use `clasp push` after making local changes.
+If you see a conflict, pull first, reconcile locally, then push.
+
+Example workflow:
+1. `clasp pull`
+2. edit `src/Code.js`
+3. `clasp push`
+
+## Notes
+
+- Keep credentials and API keys out of committed files.
+- For a public repo, do not commit `.clasp.json`.
+- The script ID is not a secret, but keeping it local avoids binding the public repo to one live project.

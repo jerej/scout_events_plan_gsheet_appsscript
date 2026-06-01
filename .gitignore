@@ -1,0 +1,5 @@
+.clasp.json
+.env
+.env.*
+.DS_Store
+README-backup.md
