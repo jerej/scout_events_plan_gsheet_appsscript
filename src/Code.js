@@ -1,13 +1,14 @@
 var CONFIG = {
   SHEET_NAME: '2026-27 Event Calendar',
   SCHOOL_YEAR_CELL_A1: 'A1',
+  LOCATION_CELL_A1: 'G1',
   HEADER_SCAN_ROWS: 10,
   DAY_LABELS: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
   TIMEZONE: 'America/New_York',
   SUNSET_FORMAT: 'HH:mm',
-  LAT: 35.7202,
-  LNG: -79.1772,
-  INVALID_WEEK_TEXT: 'Invalid Week'
+  INVALID_WEEK_TEXT: 'Invalid Week',
+  NO_LOCATION_TEXT: 'No location set',
+  INVALID_LOCATION_TEXT: 'Invalid Location'
 };
 
 /**
@@ -17,8 +18,127 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Troop Calendar')
     .addItem('Setup edit trigger', 'setupEventCalendarTrigger')
+    .addItem('Set Location (Easy button)', 'openLocationDialog')
     .addItem('Backfill Day and Sunset', 'backfillAllRows')
     .addToUi();
+}
+
+/**
+ * Opens modal dialog that can request browser geolocation on user click.
+ */
+function openLocationDialog() {
+  var html = HtmlService.createHtmlOutputFromFile('LocationDialog')
+    .setWidth(460)
+    .setHeight(420);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Set Shared Location');
+}
+
+/**
+ * Returns current shared location text from the configured location cell.
+ *
+ * @returns {{locationCell:string, currentValue:string}} Current sheet location metadata.
+ */
+function getLocationDialogContext() {
+  var sheet = getTargetSheet_();
+  if (!sheet) {
+    throw new Error('Target sheet not found: ' + CONFIG.SHEET_NAME);
+  }
+  return {
+    locationCell: CONFIG.LOCATION_CELL_A1,
+    currentValue: String(sheet.getRange(CONFIG.LOCATION_CELL_A1).getDisplayValue() || '').trim()
+  };
+}
+
+/**
+ * Resolves browser coordinates into user-friendly location choices.
+ *
+ * @param {number} lat Latitude from browser geolocation.
+ * @param {number} lng Longitude from browser geolocation.
+ * @returns {{ok:boolean, cityState:string, zip:string, summary:string, error:string}}
+ */
+function resolveLocationChoicesFromCoordinates(lat, lng) {
+  var coords = validateCoordinates_(lat, lng);
+  var geocoder = Maps.newGeocoder();
+  var result = geocoder.reverseGeocode(coords.lat, coords.lng);
+  if (!result || result.status !== 'OK' || !result.results || !result.results.length) {
+    return {
+      ok: false,
+      cityState: '',
+      zip: '',
+      summary: '',
+      error: 'Could not resolve your location. You can still type City, ST or ZIP manually.'
+    };
+  }
+
+  var components = result.results[0].address_components || [];
+  var city = extractAddressComponent_(components, 'locality') || extractAddressComponent_(components, 'postal_town');
+  var state = extractAddressComponent_(components, 'administrative_area_level_1');
+  var zip = extractAddressComponent_(components, 'postal_code');
+  var cityState = formatCityState_(city, state);
+  var summaryParts = [];
+
+  if (cityState) {
+    summaryParts.push(cityState);
+  }
+  if (zip) {
+    summaryParts.push(zip);
+  }
+
+  if (!cityState && !zip) {
+    return {
+      ok: false,
+      cityState: '',
+      zip: '',
+      summary: '',
+      error: 'Location found, but City/State or ZIP were not available. Please type a value manually.'
+    };
+  }
+
+  return {
+    ok: true,
+    cityState: cityState,
+    zip: zip,
+    summary: summaryParts.join(' | '),
+    error: ''
+  };
+}
+
+/**
+ * Saves chosen shared location text into the configured location cell and recalculates sunset values.
+ *
+ * @param {string} locationText Chosen location text (City, ST or ZIP).
+ * @returns {{ok:boolean, locationCell:string, value:string, recalculated:boolean, warning:string}} Result metadata.
+ */
+function setSharedLocationValue(locationText) {
+  var value = String(locationText || '').trim();
+  if (!value) {
+    throw new Error('Location value cannot be empty.');
+  }
+
+  var sheet = getTargetSheet_();
+  if (!sheet) {
+    throw new Error('Target sheet not found: ' + CONFIG.SHEET_NAME);
+  }
+
+  sheet.getRange(CONFIG.LOCATION_CELL_A1).setValue(value);
+
+  var headerInfo = getHeaderInfo_(sheet);
+  var recalculated = false;
+  var warning = '';
+  if (headerInfo) {
+    backfillRowsWithHeaderInfo_(sheet, headerInfo);
+    recalculated = true;
+  } else {
+    warning = 'Location saved, but sunset recalculation was skipped because headers Week, Day, Sunset were not found on the target sheet.';
+  }
+
+  return {
+    ok: true,
+    locationCell: CONFIG.LOCATION_CELL_A1,
+    value: value,
+    recalculated: recalculated,
+    warning: warning
+  };
 }
 
 /**
@@ -64,8 +184,14 @@ function installedOnEdit(e) {
   var row = e.range.getRow();
   var col = e.range.getColumn();
   var schoolYearCell = a1ToRowCol_(CONFIG.SCHOOL_YEAR_CELL_A1);
+  var locationCell = a1ToRowCol_(CONFIG.LOCATION_CELL_A1);
 
   if (row === schoolYearCell.row && col === schoolYearCell.col) {
+    backfillAllRows();
+    return;
+  }
+
+  if (row === locationCell.row && col === locationCell.col) {
     backfillAllRows();
     return;
   }
@@ -89,6 +215,20 @@ function backfillAllRows() {
   var headerInfo = getHeaderInfo_(sheet);
   if (!headerInfo) {
     throw new Error('Could not locate required headers: Week, Day, Sunset.');
+  }
+
+  backfillRowsWithHeaderInfo_(sheet, headerInfo);
+}
+
+/**
+ * Backfills rows for a sheet once header metadata has already been resolved.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet Sheet instance.
+ * @param {{headerRow:number, weekCol:number, dayCol:number, sunsetCol:number}} headerInfo Header metadata.
+ */
+function backfillRowsWithHeaderInfo_(sheet, headerInfo) {
+  if (!sheet || !headerInfo) {
+    return;
   }
 
   var lastRow = sheet.getLastRow();
@@ -126,7 +266,7 @@ function updateRowFromWeek_(sheet, row, headerInfo) {
   }
 
   var dayText = buildDayText_(parsed.startDate, parsed.endDate);
-  var sunsetText = getCachedSunsetForDate_(parsed.startDate);
+  var sunsetText = getCachedSunsetForDate_(parsed.startDate, sheet);
 
   writeIfChanged_(sheet, row, headerInfo.dayCol, dayText);
   writeIfChanged_(sheet, row, headerInfo.sunsetCol, sunsetText);
@@ -212,9 +352,17 @@ function buildDayText_(startDate, endDate) {
  * @param {Date} date Date to query.
  * @returns {string} Sunset time in HH:mm.
  */
-function getCachedSunsetForDate_(date) {
+function getCachedSunsetForDate_(date, sheet) {
+  var locationInfo = resolveSunsetLocation_(sheet);
+  if (!locationInfo.ok) {
+    if (locationInfo.reason === 'missing') {
+      return CONFIG.NO_LOCATION_TEXT;
+    }
+    return CONFIG.INVALID_LOCATION_TEXT;
+  }
+
   var dateKey = toDateKey_(date);
-  var propKey = 'sunset:' + dateKey;
+  var propKey = 'sunset:' + locationInfo.cacheKey + ':' + dateKey;
   var props = PropertiesService.getDocumentProperties();
   var cached = props.getProperty(propKey);
   if (cached) {
@@ -222,8 +370,8 @@ function getCachedSunsetForDate_(date) {
   }
 
   var url = 'https://api.sunrise-sunset.org/json?lat=' +
-    encodeURIComponent(CONFIG.LAT) +
-    '&lng=' + encodeURIComponent(CONFIG.LNG) +
+    encodeURIComponent(locationInfo.lat) +
+    '&lng=' + encodeURIComponent(locationInfo.lng) +
     '&date=' + encodeURIComponent(dateKey);
   var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
   var status = response.getResponseCode();
@@ -245,6 +393,158 @@ function getCachedSunsetForDate_(date) {
   var formatted = Utilities.formatDate(dateObj, CONFIG.TIMEZONE, CONFIG.SUNSET_FORMAT);
   props.setProperty(propKey, formatted);
   return formatted;
+}
+
+/**
+ * Resolves sunset lookup location from configured cell or geocoded input.
+ * Supports US ZIP (5-digit or ZIP+4) and city/state text.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet Sheet instance.
+ * @returns {{ok:boolean, lat:number, lng:number, cacheKey:string, error:string, reason:string}}
+ */
+function resolveSunsetLocation_(sheet) {
+  var locationText = String(sheet.getRange(CONFIG.LOCATION_CELL_A1).getDisplayValue() || '').trim();
+  if (!locationText) {
+    return {
+      ok: false,
+      lat: 0,
+      lng: 0,
+      cacheKey: 'none',
+      error: 'No location set',
+      reason: 'missing'
+    };
+  }
+
+  var normalized = normalizeLocationInput_(locationText);
+  var props = PropertiesService.getDocumentProperties();
+  var geoKey = 'geocode:' + normalized;
+  var cachedGeo = props.getProperty(geoKey);
+  if (cachedGeo) {
+    try {
+      var parsedCached = JSON.parse(cachedGeo);
+      if (
+        parsedCached &&
+        Number.isFinite(parsedCached.lat) &&
+        Number.isFinite(parsedCached.lng)
+      ) {
+        return {
+          ok: true,
+          lat: parsedCached.lat,
+          lng: parsedCached.lng,
+          cacheKey: normalized,
+          error: '',
+          reason: ''
+        };
+      }
+    } catch (err) {
+      // Ignore cache parse errors and continue with a fresh geocode lookup.
+    }
+  }
+
+  var geocoder = Maps.newGeocoder();
+  var result = geocoder.geocode(locationText);
+  if (!result || result.status !== 'OK' || !result.results || !result.results.length) {
+    return {
+      ok: false,
+      lat: 0,
+      lng: 0,
+      cacheKey: normalized,
+      error: 'Geocode lookup failed',
+      reason: 'invalid'
+    };
+  }
+
+  var location = result.results[0] && result.results[0].geometry && result.results[0].geometry.location;
+  if (!location || !Number.isFinite(location.lat) || !Number.isFinite(location.lng)) {
+    return {
+      ok: false,
+      lat: 0,
+      lng: 0,
+      cacheKey: normalized,
+      error: 'Geocode did not return coordinates',
+      reason: 'invalid'
+    };
+  }
+
+  props.setProperty(geoKey, JSON.stringify({ lat: location.lat, lng: location.lng }));
+  return {
+    ok: true,
+    lat: location.lat,
+    lng: location.lng,
+    cacheKey: normalized,
+    error: '',
+    reason: ''
+  };
+}
+
+/**
+ * Normalizes location input text for stable property keys.
+ *
+ * @param {string} value Raw location input.
+ * @returns {string} Normalized key-safe text.
+ */
+function normalizeLocationInput_(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9,\- ]/g, '')
+    .replace(/[ ,\-]+/g, '_');
+}
+
+/**
+ * Validates lat/lng values from browser geolocation payload.
+ *
+ * @param {*} lat Latitude candidate.
+ * @param {*} lng Longitude candidate.
+ * @returns {{lat:number, lng:number}} Normalized coordinates.
+ */
+function validateCoordinates_(lat, lng) {
+  var latNum = Number(lat);
+  var lngNum = Number(lng);
+  var valid = Number.isFinite(latNum) && Number.isFinite(lngNum) && latNum >= -90 && latNum <= 90 && lngNum >= -180 && lngNum <= 180;
+  if (!valid) {
+    throw new Error('Invalid coordinates received from browser geolocation.');
+  }
+  return { lat: latNum, lng: lngNum };
+}
+
+/**
+ * Extracts short_name for a given Google address component type.
+ *
+ * @param {Array<{types:string[],short_name:string}>} components Geocoder components.
+ * @param {string} targetType Component type to find.
+ * @returns {string} Component short name or empty string.
+ */
+function extractAddressComponent_(components, targetType) {
+  var list = Array.isArray(components) ? components : [];
+  for (var i = 0; i < list.length; i++) {
+    var entry = list[i];
+    var types = entry && entry.types;
+    if (Array.isArray(types) && types.indexOf(targetType) >= 0) {
+      return String(entry.short_name || '').trim();
+    }
+  }
+  return '';
+}
+
+/**
+ * Formats city/state text.
+ *
+ * @param {string} city Locality value.
+ * @param {string} state State code/value.
+ * @returns {string} Formatted city/state or empty string.
+ */
+function formatCityState_(city, state) {
+  var cityPart = String(city || '').trim();
+  var statePart = String(state || '').trim();
+  if (cityPart && statePart) {
+    return cityPart + ', ' + statePart;
+  }
+  if (cityPart) {
+    return cityPart;
+  }
+  return '';
 }
 
 /**

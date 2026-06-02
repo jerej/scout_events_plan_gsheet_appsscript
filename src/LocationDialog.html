@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <base target="_top">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 16px;
+        color: #1f2937;
+      }
+      h2 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+      p {
+        margin: 8px 0;
+        line-height: 1.4;
+      }
+      .muted {
+        color: #4b5563;
+      }
+      .card {
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 12px;
+        margin-top: 12px;
+        background: #f9fafb;
+      }
+      .status {
+        margin-top: 10px;
+        font-size: 13px;
+      }
+      .error {
+        color: #b91c1c;
+      }
+      .success {
+        color: #166534;
+      }
+      .options {
+        margin-top: 10px;
+      }
+      label {
+        display: block;
+        margin: 8px 0;
+      }
+      .buttons {
+        margin-top: 14px;
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        border: 1px solid #9ca3af;
+        border-radius: 6px;
+        background: #ffffff;
+        color: #111827;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #0b57d0;
+        border-color: #0b57d0;
+        color: #ffffff;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      code {
+        background: #f3f4f6;
+        padding: 1px 4px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Set Shared Location</h2>
+    <p class="muted">
+      This optional helper asks your browser for location only after you click the button.
+      Once saved, the value in <code>G1</code> is shared and used for everyone.
+    </p>
+
+    <div class="card">
+      <p><strong>Current shared location:</strong> <span id="currentLocation">Loading...</span></p>
+      <p class="muted">You can always type City, ST or ZIP directly into <code>G1</code>.</p>
+    </div>
+
+    <div class="buttons">
+      <button id="detectButton" class="primary" type="button">Use my current location</button>
+      <button id="closeButton" type="button" onclick="google.script.host.close()">Close</button>
+    </div>
+
+    <div id="choices" class="options" hidden>
+      <p><strong>Choose what to save to G1:</strong></p>
+      <label id="cityChoiceLabel" hidden>
+        <input type="radio" name="choice" value="city">
+        <span id="cityChoiceText"></span>
+      </label>
+      <label id="zipChoiceLabel" hidden>
+        <input type="radio" name="choice" value="zip">
+        <span id="zipChoiceText"></span>
+      </label>
+      <div class="buttons">
+        <button id="applyButton" type="button">Save selected value to G1</button>
+      </div>
+    </div>
+
+    <p id="status" class="status muted"></p>
+
+    <script>
+      var resolvedChoices = { cityState: '', zip: '' };
+
+      function setStatus(message, className) {
+        var el = document.getElementById('status');
+        el.textContent = message || '';
+        el.className = 'status ' + (className || 'muted');
+      }
+
+      function loadContext() {
+        google.script.run
+          .withSuccessHandler(function(ctx) {
+            var current = (ctx && ctx.currentValue) ? ctx.currentValue : 'No location set';
+            document.getElementById('currentLocation').textContent = current;
+          })
+          .withFailureHandler(function(err) {
+            document.getElementById('currentLocation').textContent = 'Unavailable';
+            setStatus(err && err.message ? err.message : 'Failed to load current location.', 'error');
+          })
+          .getLocationDialogContext();
+      }
+
+      function chooseDefaultOption() {
+        var cityRadio = document.querySelector('input[name="choice"][value="city"]');
+        var zipRadio = document.querySelector('input[name="choice"][value="zip"]');
+
+        if (resolvedChoices.cityState) {
+          cityRadio.checked = true;
+          return;
+        }
+        if (resolvedChoices.zip) {
+          zipRadio.checked = true;
+        }
+      }
+
+      function renderChoices(result) {
+        resolvedChoices.cityState = result.cityState || '';
+        resolvedChoices.zip = result.zip || '';
+
+        var cityLabel = document.getElementById('cityChoiceLabel');
+        var zipLabel = document.getElementById('zipChoiceLabel');
+        document.getElementById('choices').hidden = false;
+
+        if (resolvedChoices.cityState) {
+          cityLabel.hidden = false;
+          document.getElementById('cityChoiceText').textContent = resolvedChoices.cityState;
+        } else {
+          cityLabel.hidden = true;
+        }
+
+        if (resolvedChoices.zip) {
+          zipLabel.hidden = false;
+          document.getElementById('zipChoiceText').textContent = resolvedChoices.zip;
+        } else {
+          zipLabel.hidden = true;
+        }
+
+        chooseDefaultOption();
+      }
+
+      function getSelectedValue() {
+        var selected = document.querySelector('input[name="choice"]:checked');
+        if (!selected) {
+          return '';
+        }
+        if (selected.value === 'city') {
+          return resolvedChoices.cityState;
+        }
+        if (selected.value === 'zip') {
+          return resolvedChoices.zip;
+        }
+        return '';
+      }
+
+      function detectLocation() {
+        var detectButton = document.getElementById('detectButton');
+        detectButton.disabled = true;
+        setStatus('Requesting browser location permission...', 'muted');
+
+        if (!navigator.geolocation) {
+          setStatus('Geolocation is not supported in this browser. Enter City, ST or ZIP in G1 manually.', 'error');
+          detectButton.disabled = false;
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          function(pos) {
+            setStatus('Resolving location choices...', 'muted');
+            google.script.run
+              .withSuccessHandler(function(result) {
+                detectButton.disabled = false;
+                if (!result || !result.ok) {
+                  setStatus((result && result.error) || 'Could not resolve location.', 'error');
+                  return;
+                }
+                renderChoices(result);
+                setStatus('Choose a value format and click save.', 'muted');
+              })
+              .withFailureHandler(function(err) {
+                detectButton.disabled = false;
+                setStatus(err && err.message ? err.message : 'Location resolution failed.', 'error');
+              })
+              .resolveLocationChoicesFromCoordinates(pos.coords.latitude, pos.coords.longitude);
+          },
+          function(err) {
+            detectButton.disabled = false;
+            var details = err && err.message ? err.message : 'Permission denied or location unavailable.';
+            setStatus('No location was shared. You can enter City, ST or ZIP manually in G1. (' + details + ')', 'error');
+          },
+          {
+            enableHighAccuracy: false,
+            timeout: 15000,
+            maximumAge: 600000
+          }
+        );
+      }
+
+      function applySelection() {
+        var value = getSelectedValue();
+        if (!value) {
+          setStatus('Choose a City, ST or ZIP option first.', 'error');
+          return;
+        }
+
+        var applyButton = document.getElementById('applyButton');
+        applyButton.disabled = true;
+        setStatus('Saving shared location and recalculating...', 'muted');
+
+        google.script.run
+          .withSuccessHandler(function(result) {
+            applyButton.disabled = false;
+            document.getElementById('currentLocation').textContent = result.value;
+            if (result && result.recalculated === false && result.warning) {
+              setStatus(result.warning, 'muted');
+              return;
+            }
+            setStatus('Saved to G1. Everyone now uses this location for sunset calculations.', 'success');
+          })
+          .withFailureHandler(function(err) {
+            applyButton.disabled = false;
+            setStatus(err && err.message ? err.message : 'Failed to save location.', 'error');
+          })
+          .setSharedLocationValue(value);
+      }
+
+      document.getElementById('detectButton').addEventListener('click', detectLocation);
+      document.getElementById('applyButton').addEventListener('click', applySelection);
+      loadContext();
+    </script>
+  </body>
+</html>

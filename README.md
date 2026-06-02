@@ -17,25 +17,38 @@ This repository keeps the Google Sheet Apps Script source under version control 
 
 ## Setup
 
+Official clasp installation and setup instructions: [google/clasp](https://github.com/google/clasp)
+
 1. Clone the repo.
 2. Copy `.clasp.json.example` to `.clasp.json`.
 3. Replace `YOUR_SCRIPT_ID_HERE` with your bound Apps Script project ID.
 4. Confirm `.clasp.json` has `"rootDir": "src"`.
 5. Run `clasp login` if needed.
 6. Run `clasp pull` or `clasp push` from the repository root.
+7. In the sheet, enter a location in `G1` as either `City, ST` (example: `Chapel Hill, NC`) or a US ZIP code (example: `27514`) for sunset lookups. If `G1` is blank, sunset cells show `No location set`.
 
 ## Working with clasp
 
 Because `rootDir` points to `src`, clasp reads from and writes to the `src` folder automatically.
 
-Use `clasp pull` before editing if the sheet project may have changed.
+Use `clasp pull` *before editing* if the sheet project may have changed, so that you're editing the latest version.
 Use `clasp push` after making local changes.
 If you see a conflict, pull first, reconcile locally, then push.
 
 Example workflow:
+
 1. `clasp pull`
 2. edit `src/Code.js`
 3. `clasp push`
+
+## Easy button: Use my location
+
+Use the menu option `Troop Calendar -> Set Location (Easy button)` to set a shared location in `G1`.
+
+- The browser location permission prompt only appears after a user clicks `Use my current location`.
+- The chooser lets the user save either `City, ST` or ZIP into `G1`.
+- Once saved to `G1`, that location is shared and used for everyone until someone with edit access changes it.
+- If permission is denied or unavailable, no location is shared; users can still type `City, ST` or ZIP directly in `G1`.
 
 ## Notes
 
